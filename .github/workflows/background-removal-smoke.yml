@@ -1,0 +1,97 @@
+name: Smoke Remoção de Fundo
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/background-removal-smoke.yml
+      - requirements-rembg.txt
+      - scripts/smoke-background-removal.ts
+      - src/lib/backgroundRemoval.ts
+      - src/lib/subprocess.ts
+      - src/routes/images.ts
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      SMOKE_DIR: /tmp/bunnyfy-background-smoke
+      REMBG_MODEL: silueta
+      REMBG_MODEL_DIR: /tmp/bunnyfy-rembg-models
+
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Preparar Python e Node
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv
+          python3 -m venv "$RUNNER_TEMP/rembg-venv"
+          "$RUNNER_TEMP/rembg-venv/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/rembg-venv/bin/pip" install -r requirements-rembg.txt
+          npm ci
+
+      - name: Confirmar versão do rembg
+        run: |
+          "$RUNNER_TEMP/rembg-venv/bin/python" - <<'PY'
+          import importlib.metadata
+          version = importlib.metadata.version('rembg')
+          if version != '2.0.77':
+              raise SystemExit(f'versão inesperada do rembg: {version}')
+          print(f'rembg {version}')
+          PY
+
+      - name: Obter amostra pública fixada
+        run: |
+          mkdir -p "$SMOKE_DIR" "$REMBG_MODEL_DIR"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "$SMOKE_DIR/input.jpg" \
+            'https://raw.githubusercontent.com/danielgatis/rembg/684f8e9f6c9162009b21ab637d8f2b0c05502470/examples/animal-1.jpg'
+          test -s "$SMOKE_DIR/input.jpg"
+
+      - name: Provisionar modelo fora do Git
+        env:
+          U2NET_HOME: /tmp/bunnyfy-rembg-models
+          OMP_NUM_THREADS: '2'
+        run: |
+          "$RUNNER_TEMP/rembg-venv/bin/rembg" i -m "$REMBG_MODEL" "$SMOKE_DIR/input.jpg" "$SMOKE_DIR/provision.png"
+          test -s "$REMBG_MODEL_DIR/$REMBG_MODEL.onnx"
+          test -s "$SMOKE_DIR/provision.png"
+          rm -f "$SMOKE_DIR/provision.png"
+
+      - name: Executar smoke real
+        env:
+          REMBG_PATH: ${{ runner.temp }}/rembg-venv/bin/rembg
+          BACKGROUND_SMOKE_INPUT_PATH: /tmp/bunnyfy-background-smoke/input.jpg
+          BACKGROUND_SMOKE_REPORT_PATH: /tmp/bunnyfy-background-smoke/report.json
+          REMBG_OMP_NUM_THREADS: '2'
+          BACKGROUND_REMOVAL_TIMEOUT_MS: '120000'
+          IMAGE_MAX_INPUT_PIXELS: '16000000'
+          IMAGE_MAX_OUTPUT_PIXELS: '32000000'
+          IMAGE_MAX_OUTPUT_BYTES: '20971520'
+        run: |
+          /usr/bin/time -v -o "$SMOKE_DIR/resources.txt" npx tsx scripts/smoke-background-removal.ts
+          cat "$SMOKE_DIR/resources.txt"
+
+      - name: Publicar métricas do smoke
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: background-removal-smoke-metrics
+          path: |
+            /tmp/bunnyfy-background-smoke/report.json
+            /tmp/bunnyfy-background-smoke/resources.txt
+          if-no-files-found: warn
+          retention-days: 7

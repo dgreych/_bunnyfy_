@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "visualVersion": "2.0.0",
+  "core": [
+    {
+      "key": "background.board",
+      "path": "generated/backgrounds/tavern_board_v2.png",
+      "width": 1672,
+      "height": 941,
+      "sha256": "724c26a7687c8320dd8b33a7e74d8f7e2a4f73fbb09c95b798f193e813c520cb"
+    },
+    {
+      "key": "background.hand",
+      "path": "generated/backgrounds/tavern_hand_v2.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "db53744694f1d5bd707f186c9fe08f76937e2aea0bdcb7e14f66b30cb2744cb9"
+    },
+    {
+      "key": "card.back",
+      "path": "generated/cards/tavern_card_back_v2.png",
+      "width": 1054,
+      "height": 1492,
+      "sha256": "5e20dd2b316a4145c7b5eea6386caae6910ebfbd818f4e2f3c53af6d19db39de"
+    }
+  ]
+}

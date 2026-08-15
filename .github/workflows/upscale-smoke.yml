@@ -1,0 +1,62 @@
+name: Smoke Upscale
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/upscale-smoke.yml
+      - scripts/smoke-upscale.ts
+      - src/lib/imageUpscale.ts
+      - src/lib/backgroundRemoval.ts
+      - src/routes/images.ts
+      - package.json
+      - package-lock.json
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SMOKE_DIR: /tmp/bunnyfy-upscale-smoke
+
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Executar smoke real 2x e 4x
+        env:
+          UPSCALE_SMOKE_DIR: /tmp/bunnyfy-upscale-smoke
+          UPSCALE_SMOKE_REPORT_PATH: /tmp/bunnyfy-upscale-smoke/report.json
+          IMAGE_UPSCALE_TIMEOUT_MS: '30000'
+          IMAGE_MAX_INPUT_PIXELS: '16000000'
+          IMAGE_MAX_OUTPUT_PIXELS: '36000000'
+          IMAGE_MAX_OUTPUT_DIMENSION: '16384'
+          IMAGE_MAX_OUTPUT_BYTES: '20971520'
+        run: |
+          mkdir -p "$SMOKE_DIR"
+          /usr/bin/time -v -o "$SMOKE_DIR/resources.txt" npx tsx scripts/smoke-upscale.ts
+          cat "$SMOKE_DIR/resources.txt"
+
+      - name: Publicar métricas do smoke
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upscale-smoke-metrics
+          path: |
+            /tmp/bunnyfy-upscale-smoke/report.json
+            /tmp/bunnyfy-upscale-smoke/resources.txt
+          if-no-files-found: warn
+          retention-days: 7

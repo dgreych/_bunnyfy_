@@ -1,0 +1,39 @@
+name: Gerar lockfile
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - .github/workflows/lockfile.yml
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Regenerar lockfile
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Validar instalação pelo lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Publicar lockfile para revisão
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock-node20
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1

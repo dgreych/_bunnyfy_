@@ -1,0 +1,112 @@
+name: Smoke Whisper PT-BR
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/whisper-smoke.yml
+      - scripts/smoke-whisper.ts
+      - src/lib/transcription.ts
+      - src/lib/subprocess.ts
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      WHISPER_CPP_TAG: v1.9.1
+      SMOKE_DIR: /tmp/bunnyfy-whisper-smoke
+
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Instalar dependências do sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ffmpeg
+
+      - name: Instalar dependências Node
+        run: npm ci
+
+      - name: Compilar whisper.cpp estável
+        run: |
+          git clone --depth 1 --branch "$WHISPER_CPP_TAG" https://github.com/ggml-org/whisper.cpp.git "$RUNNER_TEMP/whisper.cpp"
+          test "$(git -C "$RUNNER_TEMP/whisper.cpp" describe --tags --exact-match)" = "$WHISPER_CPP_TAG"
+          cmake -S "$RUNNER_TEMP/whisper.cpp" -B "$RUNNER_TEMP/whisper.cpp/build" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/whisper.cpp/build" --target whisper-cli -j2 --config Release
+          test -x "$RUNNER_TEMP/whisper.cpp/build/bin/whisper-cli"
+
+      - name: Baixar modelo multilíngue base
+        run: |
+          cd "$RUNNER_TEMP/whisper.cpp"
+          bash ./models/download-ggml-model.sh base
+          test -s ./models/ggml-base.bin
+
+      - name: Obter amostra PT-BR pública
+        run: |
+          mkdir -p "$SMOKE_DIR"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "$SMOKE_DIR/sample.wav" \
+            'https://huggingface.co/datasets/FluidInference/fleurs-full/resolve/main/pt_br/pt_br_0000.wav?download=true'
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "$SMOKE_DIR/transcriptions.txt" \
+            'https://huggingface.co/datasets/FluidInference/fleurs-full/resolve/main/pt_br/pt_br.trans.txt?download=true'
+          python3 - <<'PY'
+          import os
+          import pathlib
+
+          directory = pathlib.Path(os.environ['SMOKE_DIR'])
+          sample_id = 'pt_br_0000'
+          reference = None
+
+          for line in (directory / 'transcriptions.txt').read_text(encoding='utf-8').splitlines():
+              parts = line.strip().split(maxsplit=1)
+              if len(parts) == 2 and parts[0].removesuffix('.wav') == sample_id:
+                  reference = parts[1].strip()
+                  break
+
+          if not reference:
+              raise RuntimeError('A referência da amostra PT-BR não foi localizada')
+
+          (directory / 'reference.txt').write_text(reference, encoding='utf-8')
+          print('Amostra PT-BR carregada sem registrar o conteúdo da fala.')
+          PY
+          test -s "$SMOKE_DIR/sample.wav"
+          test -s "$SMOKE_DIR/reference.txt"
+          rm -f "$SMOKE_DIR/transcriptions.txt"
+
+      - name: Executar smoke real
+        env:
+          WHISPER_CLI_PATH: ${{ runner.temp }}/whisper.cpp/build/bin/whisper-cli
+          WHISPER_MODEL_PATH: ${{ runner.temp }}/whisper.cpp/models/ggml-base.bin
+          FFMPEG_PATH: ffmpeg
+          WHISPER_SMOKE_AUDIO_PATH: /tmp/bunnyfy-whisper-smoke/sample.wav
+          WHISPER_SMOKE_REFERENCE_PATH: /tmp/bunnyfy-whisper-smoke/reference.txt
+          WHISPER_SMOKE_REPORT_PATH: /tmp/bunnyfy-whisper-smoke/report.json
+          WHISPER_SMOKE_TIMEOUT_MS: '180000'
+          WHISPER_SMOKE_MAX_WER: '0.85'
+        run: |
+          /usr/bin/time -v -o "$SMOKE_DIR/resources.txt" npx tsx scripts/smoke-whisper.ts
+          cat "$SMOKE_DIR/resources.txt"
+
+      - name: Publicar métricas do smoke
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-smoke-metrics
+          path: |
+            /tmp/bunnyfy-whisper-smoke/report.json
+            /tmp/bunnyfy-whisper-smoke/resources.txt
+          if-no-files-found: warn
+          retention-days: 7
