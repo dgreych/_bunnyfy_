@@ -14,6 +14,11 @@ import { TempStorage } from '../src/storage/tempStorage.ts';
 
 const TOKEN = 'image-gen-test-token-123456';
 const SIGNING_SECRET = 'image-gen-signing-secret-1234567890';
+const PNG_IMAGE = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from('imagem-de-teste'),
+]);
+const JPEG_IMAGE = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
 
 async function createRouteApp(overrides: Partial<ImageGenerateRouteDeps> = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'bunnyfy-image-gen-'));
@@ -38,8 +43,9 @@ async function createRouteApp(overrides: Partial<ImageGenerateRouteDeps> = {}) {
     mediaTtlSeconds: 60,
     limiter: new ConcurrencyLimiter(2),
     maxOutputBytes: 5_000_000,
-    imageGenTimeoutMs: 5_000,
-    generateImage: async () => Buffer.from('png-imagem-falsa'),
+    generateImage: async () => PNG_IMAGE,
+    moderation: { apiKey: 'fake-key', model: 'fake-model', timeoutMs: 5_000, maxResponseBytes: 10_000 },
+    assessSafety: async () => ({ verdict: 'allow', allowed: true }),
     ...overrides,
   });
 
@@ -73,7 +79,7 @@ test('gera imagem com sucesso, usando dimensões padrão quando não informadas'
   const { app, close } = await createRouteApp({
     generateImage: async (...args) => {
       receivedArgs = args;
-      return Buffer.from('png-imagem-falsa');
+      return PNG_IMAGE;
     },
   });
   try {
@@ -89,7 +95,7 @@ test('gera imagem com sucesso, usando dimensões padrão quando não informadas'
     assert.ok(body.data.media.mediaUrl);
     assert.equal(body.data.width, 768);
     assert.equal(body.data.height, 768);
-    assert.deepEqual(receivedArgs, ['um dragão vermelho', 768, 768]);
+    assert.deepEqual(receivedArgs, [{ prompt: 'um dragão vermelho', width: 768, height: 768 }]);
   } finally {
     await close();
   }
@@ -108,6 +114,22 @@ test('aceita dimensões customizadas dentro do limite', async () => {
     const body = response.json();
     assert.equal(body.data.width, 512);
     assert.equal(body.data.height, 1024);
+  } finally {
+    await close();
+  }
+});
+
+test('publica o MIME inferido dos bytes reais, sem presumir PNG', async () => {
+  const { app, close } = await createRouteApp({ generateImage: async () => JPEG_IMAGE });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generate',
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { prompt: 'retrato fotográfico estrito' },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().data.media.mime, 'image/jpeg');
   } finally {
     await close();
   }
@@ -136,6 +158,46 @@ test('dimensão fora do limite responde 400', async () => {
       url: '/v1/images/generate',
       headers: { authorization: `Bearer ${TOKEN}` },
       payload: { prompt: 'um dragão vermelho', width: 5000 },
+    });
+    assert.equal(response.statusCode, 400);
+  } finally {
+    await close();
+  }
+});
+
+test('prompt bloqueado pelo guardrail nunca chega ao gerador de imagem', async () => {
+  let generateCalled = false;
+  const { app, close } = await createRouteApp({
+    generateImage: async () => {
+      generateCalled = true;
+      return PNG_IMAGE;
+    },
+    assessSafety: async () => ({ verdict: 'block_adult', allowed: false }),
+  });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generate',
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { prompt: 'qualquer coisa' },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(generateCalled, false);
+  } finally {
+    await close();
+  }
+});
+
+test('guardrail indisponível (falha fechado) também bloqueia a geração', async () => {
+  const { app, close } = await createRouteApp({
+    assessSafety: async () => ({ verdict: 'block_unavailable', allowed: false }),
+  });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generate',
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { prompt: 'qualquer coisa' },
     });
     assert.equal(response.statusCode, 400);
   } finally {

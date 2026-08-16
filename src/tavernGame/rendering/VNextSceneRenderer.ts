@@ -21,6 +21,19 @@ class VNextSceneRenderer {
     this.assets = assets;
   }
 
+  async render(view) {
+    if (view?.schemaVersion !== 1 || view?.kind !== 'scene' || !view.payload) {
+      throw new TypeError('Visão inválida para renderizar a cena');
+    }
+    switch (view.sceneKind) {
+      case 'invite': return this.renderInvite(view.payload);
+      case 'mulligan': return this.renderMulligan(view.payload);
+      case 'turn': return this.renderTurn(view.payload);
+      case 'victory': return this.renderVictory(view.payload);
+      default: throw new TypeError('Tipo de cena inválido');
+    }
+  }
+
   async base(sceneKey) {
     const background = await this.assets.image('background.board');
     const canvas = background ? background.cover(WIDTH, HEIGHT) : new Jimp(WIDTH, HEIGHT, COLORS.obsidian);

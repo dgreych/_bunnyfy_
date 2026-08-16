@@ -1,13 +1,20 @@
 import { Readable } from 'node:stream';
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { z } from 'zod';
 
 import { envelopeMeta } from '../context.ts';
 import { AppError, okEnvelope } from '../envelope.ts';
 import type { ConcurrencyLimiter } from '../lib/concurrencyLimiter.ts';
 import { requireBearerAuth, type ApiKeyAuthSource } from '../plugins/auth.ts';
 import type { TempStorage } from '../storage/tempStorage.ts';
+import {
+  tavernBoardRenderBodySchema,
+  tavernHandRenderBodySchema,
+  tavernSceneRenderBodySchema,
+  type TavernBoardRenderView,
+  type TavernHandRenderView,
+  type TavernSceneRenderView,
+} from '../tavernGame/contracts/renderView.ts';
 import { TavernAssetRegistry } from '../tavernGame/rendering/TavernAssetRegistry.ts';
 import { VNextBoardRenderer } from '../tavernGame/rendering/VNextBoardRenderer.ts';
 import { VNextHandRenderer } from '../tavernGame/rendering/VNextHandRenderer.ts';
@@ -16,8 +23,8 @@ import { buildMediaDescriptor } from './media.ts';
 
 const BOARD_WIDTH = 1200;
 const BOARD_HEIGHT = 940;
-const HAND_WIDTH = 1200;
-const HAND_HEIGHT = 820;
+const HAND_WIDTH = 720;
+const HAND_HEIGHT = 960;
 const SCENE_WIDTH = 1200;
 const SCENE_HEIGHT = 675;
 
@@ -31,34 +38,14 @@ export interface TavernGameRouteDeps {
   maxStateBytes: number;
   assets?: TavernAssetRegistry;
   /** Injetáveis em teste, pra não depender do Jimp real. */
-  renderBoard?: (state: unknown, options: { playerNames: Record<string, string> }) => Promise<Buffer>;
-  renderHand?: (state: unknown, playerId: string) => Promise<Buffer>;
-  renderScene?: (kind: (typeof SCENE_KINDS)[number], payload: Record<string, unknown>) => Promise<Buffer>;
+  renderBoard?: (view: TavernBoardRenderView) => Promise<Buffer>;
+  renderHand?: (view: TavernHandRenderView, page?: number) => Promise<Buffer>;
+  renderScene?: (view: TavernSceneRenderView) => Promise<Buffer>;
 }
 
-// O estado da partida e os payloads de cena são propriedade do domínio da
-// Tavern (nazuna-gyomei) e não são revalidados campo a campo aqui — a
-// BunnyFy só renderiza pixels a partir do que já foi validado e persistido
-// do outro lado. A checagem de tamanho evita abuso; o renderer real (porte
-// verbatim dos arquivos `VNext*Renderer` de nazuna-gyomei) é quem decide se
-// a forma dos dados é utilizável.
-const jsonRecordSchema = z.record(z.string(), z.unknown());
-
-const boardBodySchema = z.object({
-  state: jsonRecordSchema,
-  playerNames: z.record(z.string(), z.string()).optional(),
-});
-
-const handBodySchema = z.object({
-  state: jsonRecordSchema,
-  playerId: z.string().min(1).max(191),
-});
-
-const SCENE_KINDS = ['invite', 'mulligan', 'turn', 'victory'] as const;
-const sceneBodySchema = z.object({
-  kind: z.enum(SCENE_KINDS),
-  payload: jsonRecordSchema.optional(),
-});
+// Mesa, mão e cenas aceitam somente Render Views versionadas e allowlisted:
+// nenhum JID, telefone, seed, ordem de deck ou mão adversária cruza a
+// fronteira da API.
 
 function assertPayloadSize(value: unknown, maxBytes: number, label: string): void {
   const size = Buffer.byteLength(JSON.stringify(value ?? {}), 'utf8');
@@ -67,21 +54,28 @@ function assertPayloadSize(value: unknown, maxBytes: number, label: string): voi
   }
 }
 
+function handPageFromQuery(query: unknown): number {
+  if (query === undefined || query === null) return 1;
+  if (!query || typeof query !== 'object' || Array.isArray(query)) {
+    throw AppError.badRequest('Página inválida para renderizar a mão.');
+  }
+  const rawPage = (query as { page?: unknown }).page;
+  if (rawPage === undefined) return 1;
+  if (rawPage !== '1' && rawPage !== '2' && rawPage !== 1 && rawPage !== 2) {
+    throw AppError.badRequest('Página inválida para renderizar a mão.');
+  }
+  return Number(rawPage);
+}
+
 export function registerTavernGameRoutes(app: FastifyInstance, deps: TavernGameRouteDeps): void {
   const assets = deps.assets ?? new TavernAssetRegistry();
   const boardRenderer = new VNextBoardRenderer({ assets });
   const handRenderer = new VNextHandRenderer({ assets });
   const sceneRenderer = new VNextSceneRenderer({ assets });
 
-  const renderBoard = deps.renderBoard ?? ((state, options) => boardRenderer.render(state, options) as Promise<Buffer>);
-  const renderHand = deps.renderHand ?? ((state, playerId) => handRenderer.render(state, playerId) as Promise<Buffer>);
-
-  const sceneRenderMethods: Record<(typeof SCENE_KINDS)[number], (payload: Record<string, unknown>) => Promise<Buffer>> = {
-    invite: payload => sceneRenderer.renderInvite(payload),
-    mulligan: payload => sceneRenderer.renderMulligan(payload),
-    turn: payload => sceneRenderer.renderTurn(payload),
-    victory: payload => sceneRenderer.renderVictory(payload),
-  };
+  const renderBoard = deps.renderBoard ?? (view => boardRenderer.render(view) as Promise<Buffer>);
+  const renderHand = deps.renderHand ?? ((view, page = 1) => handRenderer.render(view, { page }) as Promise<Buffer>);
+  const renderScene = deps.renderScene ?? (view => sceneRenderer.render(view) as Promise<Buffer>);
 
   async function finalizeOutput(
     request: FastifyRequest,
@@ -102,9 +96,9 @@ export function registerTavernGameRoutes(app: FastifyInstance, deps: TavernGameR
   }
 
   app.post('/v1/games/tavern/board', { preHandler: requireBearerAuth(deps.apiKeys, 'canvas:write') }, async request => {
-    const parsed = boardBodySchema.safeParse(request.body);
+    const parsed = tavernBoardRenderBodySchema.safeParse(request.body);
     if (!parsed.success) throw AppError.badRequest('Dados inválidos para renderizar a mesa da Taverna.');
-    assertPayloadSize(parsed.data.state, deps.maxStateBytes, 'Estado da partida');
+    assertPayloadSize(parsed.data.view, deps.maxStateBytes, 'Visão da partida');
 
     if (!deps.limiter.tryAcquire()) {
       throw AppError.tooManyRequests('Capacidade de renderização da Taverna ocupada. Tente novamente em instantes.');
@@ -112,7 +106,7 @@ export function registerTavernGameRoutes(app: FastifyInstance, deps: TavernGameR
     try {
       let output: Buffer;
       try {
-        output = await renderBoard(parsed.data.state, { playerNames: parsed.data.playerNames ?? {} });
+        output = await renderBoard(parsed.data.view);
       } catch (error) {
         if (error instanceof AppError) throw error;
         throw AppError.internal('Não foi possível renderizar a mesa da Taverna.', {
@@ -126,9 +120,10 @@ export function registerTavernGameRoutes(app: FastifyInstance, deps: TavernGameR
   });
 
   app.post('/v1/games/tavern/hand', { preHandler: requireBearerAuth(deps.apiKeys, 'canvas:write') }, async request => {
-    const parsed = handBodySchema.safeParse(request.body);
+    const parsed = tavernHandRenderBodySchema.safeParse(request.body);
     if (!parsed.success) throw AppError.badRequest('Dados inválidos para renderizar a mão da Taverna.');
-    assertPayloadSize(parsed.data.state, deps.maxStateBytes, 'Estado da partida');
+    assertPayloadSize(parsed.data.view, deps.maxStateBytes, 'Visão privada da mão');
+    const page = handPageFromQuery(request.query);
 
     if (!deps.limiter.tryAcquire()) {
       throw AppError.tooManyRequests('Capacidade de renderização da Taverna ocupada. Tente novamente em instantes.');
@@ -136,23 +131,23 @@ export function registerTavernGameRoutes(app: FastifyInstance, deps: TavernGameR
     try {
       let output: Buffer;
       try {
-        output = await renderHand(parsed.data.state, parsed.data.playerId);
+        output = await renderHand(parsed.data.view, page);
       } catch (error) {
         if (error instanceof AppError) throw error;
         throw AppError.internal('Não foi possível renderizar a mão da Taverna.', {
           renderCode: error instanceof Error ? error.name : 'unknown',
         });
       }
-      return await finalizeOutput(request, output, 'tavern-hand', HAND_WIDTH, HAND_HEIGHT);
+      return await finalizeOutput(request, output, `tavern-hand-p${page}`, HAND_WIDTH, HAND_HEIGHT);
     } finally {
       deps.limiter.release();
     }
   });
 
   app.post('/v1/games/tavern/scene', { preHandler: requireBearerAuth(deps.apiKeys, 'canvas:write') }, async request => {
-    const parsed = sceneBodySchema.safeParse(request.body);
+    const parsed = tavernSceneRenderBodySchema.safeParse(request.body);
     if (!parsed.success) throw AppError.badRequest('Dados inválidos para renderizar a cena da Taverna.');
-    assertPayloadSize(parsed.data.payload, deps.maxStateBytes, 'Payload da cena');
+    assertPayloadSize(parsed.data.view, deps.maxStateBytes, 'Visão da cena');
 
     if (!deps.limiter.tryAcquire()) {
       throw AppError.tooManyRequests('Capacidade de renderização da Taverna ocupada. Tente novamente em instantes.');
@@ -160,16 +155,14 @@ export function registerTavernGameRoutes(app: FastifyInstance, deps: TavernGameR
     try {
       let output: Buffer;
       try {
-        output = deps.renderScene
-          ? await deps.renderScene(parsed.data.kind, parsed.data.payload ?? {})
-          : await sceneRenderMethods[parsed.data.kind](parsed.data.payload ?? {});
+        output = await renderScene(parsed.data.view);
       } catch (error) {
         if (error instanceof AppError) throw error;
         throw AppError.internal('Não foi possível renderizar a cena da Taverna.', {
           renderCode: error instanceof Error ? error.name : 'unknown',
         });
       }
-      return await finalizeOutput(request, output, `tavern-scene-${parsed.data.kind}`, SCENE_WIDTH, SCENE_HEIGHT);
+      return await finalizeOutput(request, output, `tavern-scene-${parsed.data.view.sceneKind}`, SCENE_WIDTH, SCENE_HEIGHT);
     } finally {
       deps.limiter.release();
     }

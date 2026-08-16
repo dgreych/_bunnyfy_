@@ -10,6 +10,8 @@ import type { AppLogger } from './logger.ts';
 import { buildLogger } from './logger.ts';
 import type { BackgroundRemovalDeps, ImageInfo } from './lib/backgroundRemoval.ts';
 import type { AiChatControls, AiChatDeps, AiChatMessage, AiChatResult } from './lib/aiChat.ts';
+import type { ImageModerationDeps, ImageModerationResult } from './lib/imageModeration.ts';
+import { createImageGenerator, type ImageGenerator } from './lib/imageGeneration.ts';
 import { ConcurrencyLimiter } from './lib/concurrencyLimiter.ts';
 import type { UpscaleDeps, UpscaleScale } from './lib/imageUpscale.ts';
 import type { LogoStickerResult } from './lib/logoStickerRenderer.ts';
@@ -95,6 +97,12 @@ export interface BuildAppOptions {
     controls: AiChatControls,
     deps: AiChatDeps,
   ) => Promise<AiChatResult>;
+  /** Injetável em teste, pra não chamar o classificador de conteúdo real. */
+  assessImagePromptSafety?: (prompt: string, deps: ImageModerationDeps) => Promise<ImageModerationResult>;
+  /** Injetável em teste, pra não chamar nenhum adaptador de imagem real. */
+  generateImage?: ImageGenerator;
+  /** Transporte isolado dos adaptadores de imagem. */
+  imageGenerationFetch?: typeof fetch;
   /** Injetável em teste, pra não chamar a fonte externa de quiz. */
   movieQuiz?: (
     difficulty: MovieQuizDifficulty | undefined,
@@ -191,6 +199,19 @@ export async function buildApp(options: BuildAppOptions): Promise<BuiltApp> {
   await tempStorage.init();
   tempStorage.startSweeper();
 
+  const generateImage = options.generateImage ?? createImageGenerator({
+    mode: config.imageGenMode,
+    timeoutMs: config.imageGenTimeoutMs,
+    maxOutputBytes: Math.max(config.imageGenMaxOutputBytes, config.tavernArtMaxOutputBytes),
+    canaryPercent: config.cloudflareImageCanaryPercent,
+    pollinationsApiToken: config.pollinationsApiToken,
+    pollinationsEnhance: config.pollinationsImageEnhance,
+    cloudflareAccountId: config.cloudflareAccountId,
+    cloudflareApiToken: config.cloudflareApiToken,
+    cloudflareModel: config.cloudflareImageModel,
+    fetchImpl: options.imageGenerationFetch,
+  });
+
   app.addHook('onClose', async () => {
     await tempStorage.close();
   });
@@ -268,8 +289,7 @@ export async function buildApp(options: BuildAppOptions): Promise<BuiltApp> {
     mediaTtlSeconds: config.mediaTtlSeconds,
     limiter: new ConcurrencyLimiter(config.tavernArtMaxConcurrency),
     maxOutputBytes: config.tavernArtMaxOutputBytes,
-    pollinationsApiToken: config.pollinationsApiToken,
-    imageGenTimeoutMs: config.imageGenTimeoutMs,
+    generateImage,
   });
 
   registerImageGenerateRoutes(app, {
@@ -279,8 +299,15 @@ export async function buildApp(options: BuildAppOptions): Promise<BuiltApp> {
     mediaTtlSeconds: config.mediaTtlSeconds,
     limiter: new ConcurrencyLimiter(config.imageGenMaxConcurrency),
     maxOutputBytes: config.imageGenMaxOutputBytes,
-    pollinationsApiToken: config.pollinationsApiToken,
-    imageGenTimeoutMs: config.imageGenTimeoutMs,
+    generateImage,
+    moderation: {
+      apiKey: config.nvidiaApiKey,
+      model: config.nvidiaModel,
+      timeoutMs: config.aiChatTimeoutMs,
+      maxResponseBytes: config.aiChatMaxResponseBytes,
+      fetchImpl: options.fetchImpl,
+    },
+    assessSafety: options.assessImagePromptSafety,
   });
 
   registerLogoRoute(app, {

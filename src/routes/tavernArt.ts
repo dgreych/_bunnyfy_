@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { envelopeMeta } from '../context.ts';
 import { AppError, okEnvelope } from '../envelope.ts';
 import type { ConcurrencyLimiter } from '../lib/concurrencyLimiter.ts';
-import { requestPollinationsImage } from '../lib/pollinationsImage.ts';
+import type { ImageGenerator } from '../lib/imageGeneration.ts';
+import { validateGeneratedImage } from '../lib/imageGenerationResponse.ts';
 import { requireBearerAuth, type ApiKeyAuthSource } from '../plugins/auth.ts';
 import type { TempStorage } from '../storage/tempStorage.ts';
 import { buildMediaDescriptor } from './media.ts';
@@ -17,9 +18,7 @@ export interface TavernArtRouteDeps {
   mediaTtlSeconds: number;
   limiter: ConcurrencyLimiter;
   maxOutputBytes: number;
-  pollinationsApiToken?: string;
-  imageGenTimeoutMs: number;
-  generateImage?: (prompt: string) => Promise<Buffer>;
+  generateImage: ImageGenerator;
 }
 
 const CLASS_PROMPT_STYLE: Record<string, string> = {
@@ -48,14 +47,6 @@ export function buildCardArtPrompt(input: { cardName: string; classId?: string; 
 }
 
 export function registerTavernArtRoutes(app: FastifyInstance, deps: TavernArtRouteDeps): void {
-  const generateImage = deps.generateImage ?? ((prompt: string) => requestPollinationsImage(prompt, {
-    apiToken: deps.pollinationsApiToken,
-    timeoutMs: deps.imageGenTimeoutMs,
-    maxResponseBytes: deps.maxOutputBytes * 2,
-    width: 768,
-    height: 1024,
-  }));
-
   app.post('/v1/games/tavern/art', { preHandler: requireBearerAuth(deps.apiKeys, 'canvas:write') }, async (request) => {
     const parsed = artBodySchema.safeParse(request.body);
     if (!parsed.success) throw AppError.badRequest('Corpo da requisição inválido para geração de arte.');
@@ -65,13 +56,12 @@ export function registerTavernArtRoutes(app: FastifyInstance, deps: TavernArtRou
     }
     try {
       const prompt = buildCardArtPrompt(parsed.data);
-      const output = await generateImage(prompt);
-      if (output.length === 0 || output.length > deps.maxOutputBytes) {
-        throw AppError.payloadTooLarge('Imagem gerada excede o limite permitido.');
-      }
+      const output = await deps.generateImage({ prompt, width: 768, height: 1024 });
+      const sniffed = validateGeneratedImage(output, deps.maxOutputBytes);
+      const extension = sniffed.format === 'jpeg' ? 'jpg' : sniffed.format;
       const entry = await deps.tempStorage.put(Readable.from(output), {
-        mimeType: 'image/png',
-        originalName: 'tavern-card-art.png',
+        mimeType: sniffed.mime,
+        originalName: `tavern-card-art.${extension}`,
       });
       const media = buildMediaDescriptor(deps, entry, deps.mediaTtlSeconds);
       return okEnvelope({ media }, envelopeMeta(request));

@@ -31,6 +31,9 @@ capacidade.
 - **Acesso de rede ao provedor de IA configurado pela operação** — necessário
   somente quando `AI_CHAT_ENABLED=true`. Credencial, modelo e endpoint
   pertencem à BunnyFy e nunca ao bot consumidor.
+- **Acesso HTTPS ao adaptador de geração visual selecionado** — Pollinations é
+  o baseline e fallback; Cloudflare Workers AI só é usado por canário ou modo
+  primário explícitos, com credencial mantida exclusivamente na BunnyFy.
 
 Se `yt-dlp`, `ffmpeg`, Deno, `whisper-cli` ou o modelo não estiverem instalados, os
 endpoints correspondentes respondem com erro estável
@@ -110,6 +113,15 @@ Nunca versione o `.env` real. Chaves e segredos devem ser gerados e
 provisionados por um fluxo privado que não os imprima em log, histórico de
 shell, documentação ou resposta de automação.
 
+Para experimentar o adaptador visual novo, configure `CLOUDFLARE_ACCOUNT_ID` e
+`CLOUDFLARE_API_TOKEN` no ambiente privado e comece com
+`IMAGE_GEN_MODE=cloudflare-canary`. `CLOUDFLARE_IMAGE_CANARY_PERCENT=10` envia
+um bucket determinístico de 10% ao modelo interno; falhas transitórias usam o
+baseline. `cloudflare-primary` amplia o tráfego elegível, e `pollinations`
+desliga o canário sem mudar o contrato do bot. O modelo padrão é
+`@cf/black-forest-labs/flux-2-klein-4b`. `POLLINATIONS_IMAGE_ENHANCE=false`
+impede a reescrita silenciosa que causava desvio do prompt.
+
 ## Autenticação e escopos
 
 Clientes usam `Authorization: Bearer <chave>`. A configuração moderna é
@@ -180,6 +192,11 @@ por ambiente:
 - `CANVAS_MAX_AVATAR_BYTES`: 5 MiB por avatar;
 - `CANVAS_MAX_TOTAL_AVATAR_BYTES`: 20 MiB por renderização;
 - `CANVAS_MAX_OUTPUT_BYTES`: 10 MiB;
+- `IMAGE_GEN_TIMEOUT_MS`: 45 segundos por tentativa externa;
+- `IMAGE_GEN_MAX_CONCURRENCY`: 1 geração genérica por processo;
+- `IMAGE_GEN_MAX_OUTPUT_BYTES`: 10 MiB de imagem validada pelos bytes;
+- `TAVERN_ART_MAX_CONCURRENCY`: 1 arte de carta por processo;
+- `TAVERN_ART_MAX_OUTPUT_BYTES`: 10 MiB;
 - `AI_CHAT_TIMEOUT_MS`: 120 segundos;
 - `AI_CHAT_MAX_CONCURRENCY`: 2 conversas por processo;
 - `AI_CHAT_MAX_CONCURRENCY_PER_CONSUMER`: 1 conversa por identidade de chave;
@@ -239,9 +256,12 @@ lote atual precisa de um novo gate antes de deploy.
 | `POST /v1/images/compatibility-card` | `canvas:write` | card de compatibilidade |
 | `POST /v1/images/ranking-card` | `canvas:write` | ranking visual |
 | `POST /v1/images/achievement-card` | `canvas:write` | card de conquista |
+| `POST /v1/images/generate` | `canvas:write` | imagem por prompt, com moderação prévia e adaptador interno |
+| `POST /v1/games/tavern/art` | `canvas:write` | arte de carta por prompt restrito da Tavern |
 | `POST /v1/ai/chat/completions` | `ai:chat` | conversa pelo adaptador interno, atualmente em laboratório |
 
-Toda resposta segue o envelope canônico `ok/data/error/meta`.
+Toda resposta segue o envelope canônico `ok/data/error/meta` (ver
+`src/envelope.ts`).
 
 ### Exemplo — upload de imagem
 
@@ -385,11 +405,3 @@ concluída quando houver evidência de:
 9. smoke real dos recursos necessários;
 10. rollback definido;
 11. integração Gyomei gradual antes do corte definitivo.
-
-## BunnyFy-site
-
-O site vive em um repositório separado. Seu primeiro
-lote já foi iniciado em segundo plano com landing e catálogo que distinguem
-capacidade implementada de disponibilidade comercial. Não há deploy, venda de
-chaves, planos ativos, cobrança ou painel de clientes nesta etapa; identidade
-final, documentação pública e control plane continuam trabalhos separados.

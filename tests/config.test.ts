@@ -50,6 +50,54 @@ test('buildConfig aplica valores padrão sensatos sem exigir tudo', () => {
   assert.equal(config.logoMaxConcurrency, 1);
   assert.equal(config.logoRenderTimeoutMs, 45_000);
   assert.equal(config.logoMaxOutputBytes, 8 * 1024 * 1024);
+  assert.equal(config.imageGenMode, 'pollinations');
+  assert.equal(config.pollinationsImageEnhance, false);
+  assert.equal(config.cloudflareAccountId, undefined);
+  assert.equal(config.cloudflareApiToken, undefined);
+  assert.equal(config.cloudflareImageModel, '@cf/black-forest-labs/flux-2-klein-4b');
+  assert.equal(config.cloudflareImageCanaryPercent, 10);
+});
+
+test('buildConfig ativa canário Cloudflare somente com conta e token privados válidos', () => {
+  assert.throws(
+    () => buildConfig({ ...BASE_ENV, IMAGE_GEN_MODE: 'cloudflare-canary' }),
+    /geração de imagem/,
+  );
+  assert.throws(() => buildConfig({
+    ...BASE_ENV,
+    IMAGE_GEN_MODE: 'cloudflare-canary',
+    CLOUDFLARE_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token-0123456789',
+    CLOUDFLARE_IMAGE_CANARY_PERCENT: '0',
+  }), /canário/);
+
+  const config = buildConfig({
+    ...BASE_ENV,
+    IMAGE_GEN_MODE: 'cloudflare-canary',
+    CLOUDFLARE_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
+    CLOUDFLARE_API_TOKEN: ' cloudflare-test-token-0123456789 ',
+    CLOUDFLARE_IMAGE_CANARY_PERCENT: '25',
+  });
+  assert.equal(config.imageGenMode, 'cloudflare-canary');
+  assert.equal(config.cloudflareAccountId, '0123456789abcdef0123456789abcdef');
+  assert.equal(config.cloudflareApiToken, 'cloudflare-test-token-0123456789');
+  assert.equal(config.cloudflareImageCanaryPercent, 25);
+});
+
+test('buildConfig recusa ids, modelos, percentuais e booleanos frouxos na geração de imagem', () => {
+  const cloudflareEnv = {
+    ...BASE_ENV,
+    IMAGE_GEN_MODE: 'cloudflare-primary',
+    CLOUDFLARE_ACCOUNT_ID: '0123456789abcdef0123456789abcdef',
+    CLOUDFLARE_API_TOKEN: 'cloudflare-test-token-0123456789',
+  };
+  assert.throws(() => buildConfig({ ...cloudflareEnv, CLOUDFLARE_ACCOUNT_ID: 'conta-inválida' }));
+  assert.throws(() => buildConfig({ ...cloudflareEnv, CLOUDFLARE_IMAGE_MODEL: 'https://modelo.example' }));
+  assert.throws(() => buildConfig({ ...cloudflareEnv, CLOUDFLARE_IMAGE_CANARY_PERCENT: '101' }));
+  assert.throws(() => buildConfig({ ...BASE_ENV, POLLINATIONS_IMAGE_ENHANCE: 'yes' }));
+
+  const compatibility = buildConfig({ ...BASE_ENV, POLLINATIONS_IMAGE_ENHANCE: 'true' });
+  assert.equal(compatibility.pollinationsImageEnhance, true);
 });
 
 test('buildConfig nunca cai num segredo padrão inseguro', () => {

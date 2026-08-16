@@ -1,0 +1,62 @@
+name: Implantar BunnyFy em produção
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: SHA completo da BunnyFy selecionada
+        required: true
+        type: string
+      paired_expected_sha:
+        description: SHA completo do Gyomei que concluirá esta release
+        required: true
+        type: string
+      release_id:
+        description: Identificador único compartilhado pelos dois workflows
+        required: true
+        type: string
+      confirmation:
+        description: Digite DEPLOY_BUNNYFY_PRODUCTION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bunnyfy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Congelar Gyomei e promover BunnyFy
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+
+    steps:
+      - name: Baixar exatamente o ref selecionado
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+
+      - name: Validar runner e allowlist
+        run: |
+          node --check scripts/deploy-production.mjs
+          node scripts/deploy-production.mjs --validate --manifest=.github/deploy/production-runtime-manifest.json
+
+      - name: Congelar consumidor, implantar e executar smokes reais
+        env:
+          PTERODACTYL_PANEL: ${{ secrets.PTERODACTYL_PANEL }}
+          PTERODACTYL_API_KEY: ${{ secrets.PTERODACTYL_API_KEY }}
+          DEPLOY_EXPECTED_SHA: ${{ inputs.expected_sha }}
+          DEPLOY_PAIRED_EXPECTED_SHA: ${{ inputs.paired_expected_sha }}
+          DEPLOY_RELEASE_ID: ${{ inputs.release_id }}
+          DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
+        run: node scripts/deploy-production.mjs --manifest=.github/deploy/production-runtime-manifest.json

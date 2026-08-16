@@ -30,6 +30,8 @@ export async function createTestApp(options?: {
   dnsLookup?: BuildAppOptions['dnsLookup'];
   fetchImpl?: BuildAppOptions['fetchImpl'];
   aiChat?: BuildAppOptions['aiChat'];
+  generateImage?: BuildAppOptions['generateImage'];
+  imageGenerationFetch?: BuildAppOptions['imageGenerationFetch'];
   movieQuiz?: BuildAppOptions['movieQuiz'];
   renderLogoSticker?: BuildAppOptions['renderLogoSticker'];
   logger?: BuildAppOptions['logger'];
@@ -64,6 +66,8 @@ export async function createTestApp(options?: {
     dnsLookup: options?.dnsLookup,
     fetchImpl: options?.fetchImpl,
     aiChat: options?.aiChat,
+    generateImage: options?.generateImage,
+    imageGenerationFetch: options?.imageGenerationFetch,
     movieQuiz: options?.movieQuiz,
     renderLogoSticker: options?.renderLogoSticker,
     downloadYtDlpVideo: options?.downloadYtDlpVideo,

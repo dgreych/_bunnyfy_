@@ -1,6 +1,6 @@
 /**
  * Envelope JSON canônico da BunnyFy — todo endpoint responde nesse formato,
- * sucesso ou erro. Ver WORK_QUEUE.md, seção "Contrato arquitetural decidido".
+ * sucesso ou erro.
  */
 
 export interface EnvelopeMeta {

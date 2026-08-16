@@ -8,6 +8,11 @@ const boolFromEnv = z
   .optional()
   .transform((value) => value === 'true' || value === '1');
 
+const strictBoolFromEnv = z
+  .enum(['true', 'false', '1', '0'])
+  .optional()
+  .transform((value) => value === 'true' || value === '1');
+
 const optionalTrimmedString = (schema: z.ZodString) =>
   z.preprocess(
     (value) => {
@@ -19,6 +24,11 @@ const optionalTrimmedString = (schema: z.ZodString) =>
   );
 
 const modelIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9._/-]+$/);
+const cloudflareImageModelSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^@cf\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/);
 
 const csvModelIds = z
   .string()
@@ -115,12 +125,15 @@ const envSchema = z.object({
   TAVERN_GAME_MAX_OUTPUT_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
   TAVERN_GAME_MAX_STATE_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
 
-  // Geração de imagem por prompt (Pollinations.ai) — usada tanto pela arte
-  // de carta da Taverna quanto por um futuro comando de imagem no WhatsApp.
-  // Anônimo funciona sem token (com marca d'água e ~1 requisição/15s por
-  // IP); POLLINATIONS_API_TOKEN é opcional, registrado em
-  // auth.pollinations.ai, remove a marca e sobe o limite.
+  // Geração de imagem por adaptador interno. Pollinations permanece como
+  // baseline/fallback; Cloudflare entra somente por modo explícito.
+  IMAGE_GEN_MODE: z.enum(['pollinations', 'cloudflare-canary', 'cloudflare-primary']).default('pollinations'),
   POLLINATIONS_API_TOKEN: optionalTrimmedString(z.string().min(8).max(512)),
+  POLLINATIONS_IMAGE_ENHANCE: strictBoolFromEnv,
+  CLOUDFLARE_ACCOUNT_ID: optionalTrimmedString(z.string().regex(/^[A-Fa-f0-9]{32}$/)),
+  CLOUDFLARE_API_TOKEN: optionalTrimmedString(z.string().min(20).max(512).regex(/^\S+$/)),
+  CLOUDFLARE_IMAGE_MODEL: cloudflareImageModelSchema.default('@cf/black-forest-labs/flux-2-klein-4b'),
+  CLOUDFLARE_IMAGE_CANARY_PERCENT: z.coerce.number().int().min(0).max(100).default(10),
   IMAGE_GEN_TIMEOUT_MS: z.coerce.number().int().positive().max(120_000).default(45_000),
   IMAGE_GEN_MAX_CONCURRENCY: z.coerce.number().int().positive().max(4).default(1),
   IMAGE_GEN_MAX_OUTPUT_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
@@ -196,6 +209,12 @@ export function buildConfig(env: NodeJS.ProcessEnv = process.env) {
   }
   if (data.YOUTUBE_FALLBACK_ENABLED && (!data.YOUTUBE_FALLBACK_BASE_URL || !data.YOUTUBE_FALLBACK_API_KEY)) {
     throw new Error('Configuração inválida:\n  - fallback do YouTube: configure URL e credencial antes de ativar');
+  }
+  if (data.IMAGE_GEN_MODE !== 'pollinations' && (!data.CLOUDFLARE_ACCOUNT_ID || !data.CLOUDFLARE_API_TOKEN)) {
+    throw new Error('Configuração inválida:\n  - geração de imagem: configure conta e credencial internas antes de ativar Cloudflare');
+  }
+  if (data.IMAGE_GEN_MODE === 'cloudflare-canary' && data.CLOUDFLARE_IMAGE_CANARY_PERCENT === 0) {
+    throw new Error('Configuração inválida:\n  - geração de imagem: o canário precisa de percentual maior que zero');
   }
   let youtubeEgressUrl: string | undefined;
   if (data.YOUTUBE_EGRESS_URL) {
@@ -340,7 +359,13 @@ export function buildConfig(env: NodeJS.ProcessEnv = process.env) {
     tavernArtMaxConcurrency: data.TAVERN_ART_MAX_CONCURRENCY,
     tavernArtMaxOutputBytes: data.TAVERN_ART_MAX_OUTPUT_BYTES,
 
+    imageGenMode: data.IMAGE_GEN_MODE,
     pollinationsApiToken: data.POLLINATIONS_API_TOKEN,
+    pollinationsImageEnhance: data.POLLINATIONS_IMAGE_ENHANCE,
+    cloudflareAccountId: data.CLOUDFLARE_ACCOUNT_ID,
+    cloudflareApiToken: data.CLOUDFLARE_API_TOKEN,
+    cloudflareImageModel: data.CLOUDFLARE_IMAGE_MODEL,
+    cloudflareImageCanaryPercent: data.CLOUDFLARE_IMAGE_CANARY_PERCENT,
     imageGenTimeoutMs: data.IMAGE_GEN_TIMEOUT_MS,
     imageGenMaxConcurrency: data.IMAGE_GEN_MAX_CONCURRENCY,
     imageGenMaxOutputBytes: data.IMAGE_GEN_MAX_OUTPUT_BYTES,

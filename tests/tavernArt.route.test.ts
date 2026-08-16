@@ -14,6 +14,10 @@ import { TempStorage } from '../src/storage/tempStorage.ts';
 
 const TOKEN = 'tavern-art-test-token-123456';
 const SIGNING_SECRET = 'tavern-art-signing-secret-1234567890';
+const PNG_IMAGE = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from('arte-de-teste'),
+]);
 
 async function createRouteApp(overrides: Partial<TavernArtRouteDeps> = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'bunnyfy-tavern-art-'));
@@ -38,8 +42,7 @@ async function createRouteApp(overrides: Partial<TavernArtRouteDeps> = {}) {
     mediaTtlSeconds: 60,
     limiter: new ConcurrencyLimiter(2),
     maxOutputBytes: 5_000_000,
-    imageGenTimeoutMs: 5_000,
-    generateImage: async () => Buffer.from('png-arte-falsa'),
+    generateImage: async () => PNG_IMAGE,
     ...overrides,
   });
 
@@ -144,7 +147,7 @@ test('concorrência esgotada responde 429', async () => {
     limiter: new ConcurrencyLimiter(1),
     generateImage: async () => {
       await blocking;
-      return Buffer.from('png-arte-falsa');
+      return PNG_IMAGE;
     },
   });
   try {

@@ -1,4 +1,5 @@
 import { AppError } from '../envelope.ts';
+import { readResponseBodyWithLimit } from './imageGenerationResponse.ts';
 
 export const POLLINATIONS_IMAGE_ENDPOINT = 'https://image.pollinations.ai/prompt';
 
@@ -9,43 +10,10 @@ export interface PollinationsImageDeps {
   width?: number;
   height?: number;
   model?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   signal?: AbortSignal;
   endpoint?: string;
-}
-
-type StreamReadResult = {
-  done: boolean;
-  value?: Uint8Array;
-};
-
-async function readBodyWithLimit(response: Response, maxBytes: number): Promise<Buffer> {
-  const declaredLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    await response.body?.cancel('response-too-large').catch(() => undefined);
-    throw AppError.payloadTooLarge('Imagem gerada excede o limite permitido.');
-  }
-  if (!response.body) throw AppError.unavailable('Resposta da geração de imagem sem corpo.');
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  try {
-    for (;;) {
-      const result = (await reader.read()) as StreamReadResult;
-      if (result.done) break;
-      if (!result.value) continue;
-      totalBytes += result.value.byteLength;
-      if (totalBytes > maxBytes) {
-        await reader.cancel('response-too-large').catch(() => undefined);
-        throw AppError.payloadTooLarge('Imagem gerada excede o limite permitido.');
-      }
-      chunks.push(result.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+  enhance?: boolean;
 }
 
 /**
@@ -69,10 +37,10 @@ export async function requestPollinationsImage(prompt: string, deps: Pollination
     height: String(deps.height ?? 768),
     model: deps.model ?? 'flux',
     nologo: 'true',
-    // O modelo segue prompt em inglês com mais fidelidade; enhance deixa
-    // o próprio Pollinations reescrever/detalhar o prompt antes de gerar,
-    // o que também ajuda quando o texto original não está em inglês.
-    enhance: 'true',
+    // Reescrita silenciosa muda o pedido e foi a causa observada de prompt
+    // drift. O padrão estrito preserva o texto literal; a compatibilidade
+    // antiga só volta mediante configuração explícita.
+    enhance: deps.enhance === true ? 'true' : 'false',
   });
   const url = `${base}/${encodeURIComponent(prompt)}?${params.toString()}`;
 
@@ -91,7 +59,7 @@ export async function requestPollinationsImage(prompt: string, deps: Pollination
         internalDetails: { upstreamStatus: response.status },
       });
     }
-    const buffer = await readBodyWithLimit(response, deps.maxResponseBytes);
+    const buffer = await readResponseBodyWithLimit(response, deps.maxResponseBytes);
     if (buffer.length === 0) throw AppError.unavailable('Geração de imagem devolveu corpo vazio.');
     return buffer;
   } catch (error) {
