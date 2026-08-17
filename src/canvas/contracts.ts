@@ -16,6 +16,7 @@ export const welcomeCardSchema = z.object({
   avatarMediaId: mediaIdSchema,
   backgroundMediaId: mediaIdSchema,
   headline: optionalText(72),
+  persona: z.enum(['gyomei']).default('gyomei'),
   theme: themeSchema,
 }).strict();
 

@@ -15,6 +15,7 @@ export interface HealthRouteDeps {
   mediaDir: string;
   ytDlpPath: string;
   ffmpegPath: string;
+  ffprobePath: string;
   denoPath: string;
   youtubeJsRuntime?: YoutubeJsRuntime;
   youtubeJsRuntimePath?: string;
@@ -26,6 +27,7 @@ export interface HealthRouteDeps {
   movieQuizAvailable: boolean;
   youtubeEgressAvailable: boolean;
   youtubeFallbackAvailable: boolean;
+  stickersAvailable: boolean;
 }
 
 async function isDirWritable(dir: string): Promise<boolean> {
@@ -58,10 +60,11 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
     const youtubeJsRuntimePath =
       deps.youtubeJsRuntimePath?.trim() || (youtubeJsRuntime === 'deno' ? deps.denoPath : youtubeJsRuntime);
 
-    const [ytDlpVersion, ffmpegAvailable, youtubeJsRuntimeVersion, whisperCliAvailable, whisperModelAvailable, rembgAvailable, rembgModelAvailable] =
+    const [ytDlpVersion, ffmpegAvailable, ffprobeAvailable, youtubeJsRuntimeVersion, whisperCliAvailable, whisperModelAvailable, rembgAvailable, rembgModelAvailable] =
       await Promise.all([
         readToolVersion(deps.ytDlpPath),
         checkToolAvailable(deps.ffmpegPath),
+        checkToolAvailable(deps.ffprobePath),
         readToolVersion(youtubeJsRuntimePath),
         checkToolAvailable(deps.whisperCliPath),
         fileExists(deps.whisperModelPath),
@@ -79,6 +82,7 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
       tools: {
         ytDlp: ytDlpAvailable,
         ffmpeg: ffmpegAvailable,
+        ffprobe: ffprobeAvailable,
         deno: youtubeJsRuntime === 'deno' && youtubeJsRuntimeAvailable,
         youtubeJsRuntime: youtubeJsRuntimeAvailable,
         youtubeJsRuntimeName: youtubeJsRuntime,
@@ -103,6 +107,8 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
         backgroundRemoval: storageWritable && rembgAvailable && rembgModelAvailable,
         aiChat: deps.aiChatAvailable,
         movieQuiz: deps.movieQuizAvailable,
+        stickersStatic: storageWritable && deps.stickersAvailable,
+        stickersAnimated: storageWritable && deps.stickersAvailable && ffmpegAvailable && ffprobeAvailable,
       },
     };
 

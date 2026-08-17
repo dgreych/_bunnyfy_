@@ -30,6 +30,7 @@ import type {
 import { downloadYoutubeMedia } from './lib/youtube.ts';
 import { downloadYoutubeMediaViaEgress } from './lib/youtubeEgress.ts';
 import { downloadYoutubeMediaWithFallback } from './lib/youtubeFallback.ts';
+import { registerBunstatsRoutes } from './routes/bunstats.ts';
 import { registerHealthRoutes } from './routes/health.ts';
 import { registerImageGenerateRoutes } from './routes/imageGenerate.ts';
 import { registerImageProcessingRoutes } from './routes/images.ts';
@@ -45,6 +46,7 @@ import type {
   YtDlpVideoDownloadResult,
 } from './lib/ytdlpVideoDownload.ts';
 import { registerMovieQuizRoute } from './routes/movieQuiz.ts';
+import { registerNexoGameRoutes, type NexoGameRouteDeps } from './routes/nexoGame.ts';
 import { registerSocialCanvasRoutes } from './routes/socialCanvas.ts';
 import { registerSocialDownloadRoutes } from './routes/socialDownloads.ts';
 import { registerTavernArtRoutes } from './routes/tavernArt.ts';
@@ -110,6 +112,11 @@ export interface BuildAppOptions {
   ) => Promise<MovieQuizResult>;
   /** Injetável em teste para não executar Sharp/ffmpeg reais. */
   renderLogoSticker?: (input: StickerLogoInput) => Promise<LogoStickerResult>;
+  /** Injetáveis em teste para isolar os renderizadores NEXO. */
+  renderNexoCircle?: NexoGameRouteDeps['renderCircle'];
+  renderNexoCharacter?: NexoGameRouteDeps['renderCharacter'];
+  renderNexoEncounter?: NexoGameRouteDeps['renderEncounter'];
+  renderNexoLocation?: NexoGameRouteDeps['renderLocation'];
   /** Injetável em teste, pra não chamar yt-dlp real (Facebook/Pinterest). */
   downloadYtDlpVideo?: (url: string, deps: YtDlpVideoDownloadDeps) => Promise<YtDlpVideoDownloadResult>;
   /** Injetável em teste, pra não chamar tikwm.com/Kwai reais (TikTok/Kwai). */
@@ -233,6 +240,10 @@ export async function buildApp(options: BuildAppOptions): Promise<BuiltApp> {
     youtubeFallbackAvailable: config.youtubeFallbackEnabled,
   });
 
+  registerBunstatsRoutes(app, {
+    apiKeys: config.apiKeys,
+  });
+
   registerMediaRoutes(app, {
     tempStorage,
     apiKeys: config.apiKeys,
@@ -280,6 +291,20 @@ export async function buildApp(options: BuildAppOptions): Promise<BuiltApp> {
     limiter: new ConcurrencyLimiter(config.tavernGameMaxConcurrency),
     maxOutputBytes: config.tavernGameMaxOutputBytes,
     maxStateBytes: config.tavernGameMaxStateBytes,
+  });
+
+  registerNexoGameRoutes(app, {
+    tempStorage,
+    apiKeys: config.apiKeys,
+    mediaSigningSecret: config.mediaSigningSecret,
+    mediaTtlSeconds: config.mediaTtlSeconds,
+    limiter: new ConcurrencyLimiter(config.tavernGameMaxConcurrency),
+    maxOutputBytes: config.tavernGameMaxOutputBytes,
+    maxStateBytes: config.tavernGameMaxStateBytes,
+    renderCircle: options.renderNexoCircle,
+    renderCharacter: options.renderNexoCharacter,
+    renderEncounter: options.renderNexoEncounter,
+    renderLocation: options.renderNexoLocation,
   });
 
   registerTavernArtRoutes(app, {

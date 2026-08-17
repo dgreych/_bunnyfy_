@@ -142,55 +142,23 @@ function classifySubprocessFailure(stderr: string): SubprocessFailureKind {
   return 'other';
 }
 
-/** Teto de stderr retido em `SubprocessExitError.stderr` -- log server-side, nunca vai pro cliente. */
-const SUBPROCESS_STDERR_CAP_BYTES = 4096;
-
-/** Remove bytes NUL e limita tamanho, mas preserva o texto diagnostico como veio. */
-function sanitizeSubprocessStderr(stderr: string): string {
-  const stripped = stderr.split('\u0000').join('');
-  return stripped.length > SUBPROCESS_STDERR_CAP_BYTES
-    ? stripped.slice(0, SUBPROCESS_STDERR_CAP_BYTES) + '...(truncado)'
-    : stripped;
-}
-
 export class SubprocessExitError extends Error {
   readonly toolName: string;
   readonly exitCode: string | number | null;
-  readonly signal: string | null;
   readonly failureKind: SubprocessFailureKind;
-  /**
-   * stderr bruto (sanitizado/limitado). Propriedade não enumerável de propósito:
-   * `JSON.stringify(error)`, spreads e logs genéricos continuam sem vazar stderr
-   * de ferramentas como yt-dlp (que pode conter URL/cookie) — ver
-   * tests/subprocess.test.ts. Só quem lê `error.stderr` explicitamente (ex.:
-   * runWhisperCli, que sabe que o stderr do whisper-cli não carrega segredo)
-   * decide colocá-lo em `internalDetails` pra log server-side.
-   */
-  declare readonly stderr: string;
 
   constructor(
     toolName: string,
     exitCode: string | number | null,
-    signal: string | null,
-    stderr: string,
     failureKind: SubprocessFailureKind,
   ) {
     super(
-      signal
-        ? `Ferramenta externa encerrada pelo sinal ${signal} (${failureKind}).`
-        : `Ferramenta externa encerrou com erro (${failureKind}, exit=${String(exitCode ?? 'unknown')}).`,
+      `Ferramenta externa encerrou com erro (${failureKind}, exit=${String(exitCode ?? 'unknown')}).`,
     );
     this.name = 'SubprocessExitError';
     this.toolName = toolName;
     this.exitCode = exitCode;
-    this.signal = signal;
     this.failureKind = failureKind;
-    Object.defineProperty(this, 'stderr', {
-      value: sanitizeSubprocessStderr(stderr),
-      enumerable: false,
-      writable: false,
-      configurable: false,
-    });
   }
 }
 
@@ -232,13 +200,10 @@ export function runSubprocess(
             return;
           }
           const exitCode = (error as { code?: string | number }).code ?? null;
-          const signal = error.signal ?? null;
           reject(
             new SubprocessExitError(
               bin,
               exitCode,
-              signal,
-              String(stderr),
               classifySubprocessFailure(String(stderr)),
             ),
           );
