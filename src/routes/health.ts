@@ -15,10 +15,12 @@ export interface HealthRouteDeps {
   mediaDir: string;
   ytDlpPath: string;
   ffmpegPath: string;
-  ffprobePath: string;
+  ffprobePath?: string;
   denoPath: string;
   youtubeJsRuntime?: YoutubeJsRuntime;
   youtubeJsRuntimePath?: string;
+  /** Desligar devolve a transcrição ao provedor legado do consumidor. */
+  transcriptionEnabled?: boolean;
   whisperCliPath: string;
   whisperModelPath: string;
   rembgPath: string;
@@ -27,7 +29,7 @@ export interface HealthRouteDeps {
   movieQuizAvailable: boolean;
   youtubeEgressAvailable: boolean;
   youtubeFallbackAvailable: boolean;
-  stickersAvailable: boolean;
+  stickersAvailable?: boolean;
 }
 
 async function isDirWritable(dir: string): Promise<boolean> {
@@ -59,12 +61,14 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
     const youtubeJsRuntime = deps.youtubeJsRuntime ?? 'deno';
     const youtubeJsRuntimePath =
       deps.youtubeJsRuntimePath?.trim() || (youtubeJsRuntime === 'deno' ? deps.denoPath : youtubeJsRuntime);
+    const ffprobePath = deps.ffprobePath?.trim() || 'ffprobe';
+    const stickersAvailable = deps.stickersAvailable ?? false;
 
     const [ytDlpVersion, ffmpegAvailable, ffprobeAvailable, youtubeJsRuntimeVersion, whisperCliAvailable, whisperModelAvailable, rembgAvailable, rembgModelAvailable] =
       await Promise.all([
         readToolVersion(deps.ytDlpPath),
         checkToolAvailable(deps.ffmpegPath),
-        checkToolAvailable(deps.ffprobePath),
+        checkToolAvailable(ffprobePath),
         readToolVersion(youtubeJsRuntimePath),
         checkToolAvailable(deps.whisperCliPath),
         fileExists(deps.whisperModelPath),
@@ -103,12 +107,12 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
           || deps.youtubeFallbackAvailable
           || (ytDlpAvailable && ffmpegAvailable && youtubeJsRuntimeAvailable)
         ),
-        transcription: storageWritable && ffmpegAvailable && whisperCliAvailable && whisperModelAvailable,
+        transcription: deps.transcriptionEnabled !== false && storageWritable && ffmpegAvailable && whisperCliAvailable && whisperModelAvailable,
         backgroundRemoval: storageWritable && rembgAvailable && rembgModelAvailable,
         aiChat: deps.aiChatAvailable,
         movieQuiz: deps.movieQuizAvailable,
-        stickersStatic: storageWritable && deps.stickersAvailable,
-        stickersAnimated: storageWritable && deps.stickersAvailable && ffmpegAvailable && ffprobeAvailable,
+        stickersStatic: storageWritable && stickersAvailable,
+        stickersAnimated: storageWritable && stickersAvailable && ffmpegAvailable && ffprobeAvailable,
       },
     };
 
