@@ -14,10 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify-node20:
-    name: Node 20
+  qualidade:
+    name: Qualidade e boot limpo
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Obter código
@@ -26,7 +26,7 @@ jobs:
       - name: Configurar Node 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20.x
+          node-version: 20.12.0
           cache: npm
 
       - name: Instalar ffmpeg
@@ -35,7 +35,92 @@ jobs:
           sudo apt-get install -y ffmpeg
 
       - name: Instalar dependências
-        run: npm ci
+        run: npm ci --include=optional --no-audit --no-fund
 
       - name: Verificar projeto
         run: npm run verify
+
+      - name: Verificar contrato de portabilidade
+        run: npm run verify:portability
+
+      - name: Criar configuração local de teste
+        run: npm run setup:local
+
+      - name: Confirmar carregamento do Sharp
+        run: node -e "import('sharp').then(() => console.log('sharp ok')).catch((error) => { console.error(error); process.exit(1); })"
+
+      - name: Subir clone limpo e testar health
+        shell: bash
+        run: |
+          npm start > bunnyfy-ci.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8080/health > /tmp/bunnyfy-health.json; then
+              cat /tmp/bunnyfy-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat bunnyfy-ci.log
+          exit 1
+
+  portabilidade:
+    name: ${{ matrix.os }} · Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['20.12.0', '22', '24']
+
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Instalar dependências em clone limpo
+        run: npm ci --include=optional --no-audit --no-fund
+
+      - name: Verificar lockfile multiplataforma
+        run: npm run verify:portability
+
+      - name: Confirmar Sharp na plataforma
+        run: node -e "import('sharp').then(() => console.log('sharp ok')).catch((error) => { console.error(error); process.exit(1); })"
+
+  contrato-termux:
+    name: Contrato Termux/Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node mínimo
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.12.0
+          cache: npm
+
+      - name: Instalar dependências do lockfile
+        run: npm ci --include=optional --no-audit --no-fund
+
+      - name: Validar artefatos Android do lockfile
+        run: npm run verify:portability
+
+      - name: Validar instalador Termux
+        shell: bash
+        run: |
+          bash -n scripts/install-termux.sh
+          grep -q 'nodejs-lts' scripts/install-termux.sh
+          grep -q 'ffmpeg' scripts/install-termux.sh
+          grep -q 'termux-tools' scripts/install-termux.sh
+          grep -q 'npm ci --include=optional' scripts/install-termux.sh
+          grep -q "import('sharp')" scripts/install-termux.sh
