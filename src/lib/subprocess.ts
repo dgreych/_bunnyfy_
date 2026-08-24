@@ -25,6 +25,7 @@ export class SubprocessTimeoutError extends Error {
 
 export type SubprocessFailureKind =
   | 'youtube_antibot'
+  | 'youtube_cookies_invalid'
   | 'js_challenge'
   | 'youtube_delivery'
   | 'youtube_auth'
@@ -48,8 +49,39 @@ function normalizeSubprocessDiagnosticText(stderr: string): string {
     .replace(/\u00a0/g, ' ');
 }
 
-function classifySubprocessFailure(stderr: string): SubprocessFailureKind {
+function sanitizeInternalStderr(stderr: string): string {
+  let sanitized = '';
+  for (const character of stderr) {
+    const codePoint = character.codePointAt(0)!;
+    if (
+      codePoint === 0x09 ||
+      codePoint === 0x0a ||
+      codePoint === 0x0d ||
+      (codePoint >= 0x20 && codePoint !== 0x7f)
+    ) {
+      sanitized += character;
+    }
+  }
+  return sanitized.slice(-4096);
+}
+
+/**
+ * Exportada para teste: a classificação decide a ação do operador (renovar
+ * cookie x trocar de estratégia anti-bot) e precisa ser verificável direto,
+ * sem depender de encenar um subprocesso real.
+ */
+export function classifySubprocessFailure(stderr: string): SubprocessFailureKind {
   const text = normalizeSubprocessDiagnosticText(stderr);
+
+  if (
+    text.includes('cookies are no longer valid') ||
+    text.includes('account cookies are no longer valid') ||
+    text.includes('failed to parse cookies') ||
+    text.includes('cookies file is not in netscape format') ||
+    text.includes('no such file or directory') && text.includes('cookies')
+  ) {
+    return 'youtube_cookies_invalid';
+  }
 
   if (
     text.includes("sign in to confirm you're not a bot") ||
@@ -145,19 +177,30 @@ function classifySubprocessFailure(stderr: string): SubprocessFailureKind {
 export class SubprocessExitError extends Error {
   readonly toolName: string;
   readonly exitCode: string | number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stderr: string;
   readonly failureKind: SubprocessFailureKind;
 
   constructor(
     toolName: string,
     exitCode: string | number | null,
     failureKind: SubprocessFailureKind,
+    signal: NodeJS.Signals | null = null,
+    stderr = '',
   ) {
     super(
-      `Ferramenta externa encerrou com erro (${failureKind}, exit=${String(exitCode ?? 'unknown')}).`,
+      `Ferramenta externa encerrou com erro (${failureKind}, exit=${String(exitCode ?? 'unknown')}, signal=${String(signal ?? 'none')}).`,
     );
     this.name = 'SubprocessExitError';
     this.toolName = toolName;
     this.exitCode = exitCode;
+    this.signal = signal;
+    this.stderr = sanitizeInternalStderr(stderr);
+    Object.defineProperty(this, 'stderr', {
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
     this.failureKind = failureKind;
   }
 }
@@ -200,11 +243,15 @@ export function runSubprocess(
             return;
           }
           const exitCode = (error as { code?: string | number }).code ?? null;
+          const signal = error.signal ?? null;
+          const stderrText = String(stderr);
           reject(
             new SubprocessExitError(
               bin,
               exitCode,
-              classifySubprocessFailure(String(stderr)),
+              classifySubprocessFailure(stderrText),
+              signal,
+              stderrText,
             ),
           );
           return;
@@ -235,9 +282,6 @@ export async function readToolVersion(
       .split(/\r?\n/)
       .map((line) => line.trim())
       .find(Boolean) ?? null;
-    // Só respostas válidas são estáveis o bastante para cache.
-    // Falha transitória de startup/I/O não pode envenenar /ready
-    // até o próximo restart do processo.
     if (firstLine !== null) {
       versionCache.set(cacheKey, firstLine);
     }
@@ -262,8 +306,6 @@ export async function checkToolAvailable(bin: string, versionArgs: string[] = ['
       availabilityCache.set(bin, false);
       return false;
     }
-    // Erro diferente de "não encontrado" (ex.: --version falhou por outro
-    // motivo) ainda conta como "existe", só não cacheamos o resultado.
     return true;
   }
 }
