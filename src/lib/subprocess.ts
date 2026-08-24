@@ -36,12 +36,20 @@ export type SubprocessFailureKind =
   | 'network'
   | 'other';
 
-/**
- * CLASSIFIER_V2_UNICODE_NORMALIZATION
- *
- * Normaliza somente caracteres tipográficos relevantes para classificação.
- * O texto normalizado nunca é persistido nem anexado ao erro.
- */
+const FAILURE_KINDS = new Set<SubprocessFailureKind>([
+  'youtube_antibot',
+  'youtube_cookies_invalid',
+  'js_challenge',
+  'youtube_delivery',
+  'youtube_auth',
+  'media_unavailable',
+  'http_429',
+  'http_403',
+  'format',
+  'network',
+  'other',
+]);
+
 function normalizeSubprocessDiagnosticText(stderr: string): string {
   return stderr
     .toLowerCase()
@@ -65,11 +73,6 @@ function sanitizeInternalStderr(stderr: string): string {
   return sanitized.slice(-4096);
 }
 
-/**
- * Exportada para teste: a classificação decide a ação do operador (renovar
- * cookie x trocar de estratégia anti-bot) e precisa ser verificável direto,
- * sem depender de encenar um subprocesso real.
- */
 export function classifySubprocessFailure(stderr: string): SubprocessFailureKind {
   const text = normalizeSubprocessDiagnosticText(stderr);
 
@@ -134,17 +137,11 @@ export function classifySubprocessFailure(stderr: string): SubprocessFailureKind
     return 'media_unavailable';
   }
 
-  if (
-    text.includes('http error 429') ||
-    text.includes('429 too many requests')
-  ) {
+  if (text.includes('http error 429') || text.includes('429 too many requests')) {
     return 'http_429';
   }
 
-  if (
-    text.includes('http error 403') ||
-    text.includes('403 forbidden')
-  ) {
+  if (text.includes('http error 403') || text.includes('403 forbidden')) {
     return 'http_403';
   }
 
@@ -185,9 +182,28 @@ export class SubprocessExitError extends Error {
     toolName: string,
     exitCode: string | number | null,
     failureKind: SubprocessFailureKind,
-    signal: NodeJS.Signals | null = null,
-    stderr = '',
+    signal?: NodeJS.Signals | null,
+    stderr?: string,
+  );
+  constructor(
+    toolName: string,
+    exitCode: string | number | null,
+    signal: NodeJS.Signals | null,
+    stderr: string,
+    failureKind: SubprocessFailureKind,
+  );
+  constructor(
+    toolName: string,
+    exitCode: string | number | null,
+    third: SubprocessFailureKind | NodeJS.Signals | null,
+    fourth: NodeJS.Signals | string | null = null,
+    fifth: string | SubprocessFailureKind = '',
   ) {
+    const modernOrder = typeof third === 'string' && FAILURE_KINDS.has(third as SubprocessFailureKind);
+    const failureKind = modernOrder ? third as SubprocessFailureKind : fifth as SubprocessFailureKind;
+    const signal = modernOrder ? fourth as NodeJS.Signals | null : third as NodeJS.Signals | null;
+    const stderr = modernOrder ? String(fifth ?? '') : String(fourth ?? '');
+
     super(
       `Ferramenta externa encerrou com erro (${failureKind}, exit=${String(exitCode ?? 'unknown')}, signal=${String(signal ?? 'none')}).`,
     );
@@ -201,7 +217,7 @@ export class SubprocessExitError extends Error {
       configurable: false,
       writable: false,
     });
-    this.failureKind = failureKind;
+    this.failureKind = FAILURE_KINDS.has(failureKind) ? failureKind : 'other';
   }
 }
 
@@ -210,11 +226,6 @@ export interface RunSubprocessResult {
   stderr: string;
 }
 
-/**
- * Roda um binário externo com argumentos em array — nunca via shell, nunca
- * com interpolação de string. Detecta ausência do binário (`ENOENT`)
- * explicitamente e vira um erro estável em vez de derrubar o processo.
- */
 export function runSubprocess(
   bin: string,
   args: string[],
@@ -282,20 +293,15 @@ export async function readToolVersion(
       .split(/\r?\n/)
       .map((line) => line.trim())
       .find(Boolean) ?? null;
-    if (firstLine !== null) {
-      versionCache.set(cacheKey, firstLine);
-    }
+    if (firstLine !== null) versionCache.set(cacheKey, firstLine);
     return firstLine;
   } catch {
     return null;
   }
 }
 
-/** Confirma se um binário existe e roda, sem cachear indefinidamente falhas por outro motivo. */
 export async function checkToolAvailable(bin: string, versionArgs: string[] = ['--version']): Promise<boolean> {
-  if (availabilityCache.has(bin)) {
-    return availabilityCache.get(bin)!;
-  }
+  if (availabilityCache.has(bin)) return availabilityCache.get(bin)!;
 
   try {
     await runSubprocess(bin, versionArgs, { timeoutMs: 5000 });
@@ -310,7 +316,6 @@ export async function checkToolAvailable(bin: string, versionArgs: string[] = ['
   }
 }
 
-/** Só pra testes: limpa o cache de disponibilidade entre casos. */
 export function resetToolAvailabilityCache(): void {
   availabilityCache.clear();
   versionCache.clear();
