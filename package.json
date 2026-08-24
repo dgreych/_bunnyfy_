@@ -13,6 +13,8 @@
     "dev": "tsx watch src/index.ts",
     "prestart": "node scripts/check-runtime.mjs",
     "start": "tsx src/index.ts",
+    "setup:local": "node scripts/setup-local.mjs",
+    "verify:portability": "node scripts/verify-portability.mjs",
     "preflight": "tsx scripts/preflight.ts",
     "smoke:whisper": "tsx scripts/smoke-whisper.ts",
     "smoke:background-removal": "tsx scripts/smoke-background-removal.ts",
