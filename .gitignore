@@ -9,3 +9,5 @@ npm-debug.log*
 !.env.example
 coverage/
 .DS_Store
+.tools/
+.bunnyfy-secrets/
