@@ -198,3 +198,10 @@ Este espaço é o cartão técnico da BunnyFy: arquitetura, contratos, decisões
   <strong>BunnyFy</strong><br>
   <sub>Media in. Power out.</sub>
 </p>
+## Instagram para consumidores
+
+`POST /v1/downloads/instagram` recebe `{ "url": "https://www.instagram.com/reel/<id>/" }` com autenticação Bearer. A resposta contém `data.items`, na ordem da publicação, com tipo, dimensões e descritor de mídia. Fotos, Reels e carrosséis utilizam o mesmo contrato; vídeos são entregues em MP4 com áudio quando a publicação tem áudio. O limite é de 20 mídias, com limites de tamanho e tempo, sem transformar falhas em carrosséis incompletos.
+
+O consumidor deve resolver `media.mediaUrl` relativa contra a origem da API, baixar os bytes antes da expiração e enviar a mídia no tipo correspondente. Nunca coloque a chave na URL. Stories usam o link direto `/stories/usuario/id/` e dependem de estarem disponíveis e acessíveis à sessão mantida pela plataforma.
+
+No Shogun, use `!instagram <link>` ou `!igstory <link>`. A sessão de acesso ao Instagram fica na API; cada instância do bot utiliza sua configuração BunnyFy e não precisa receber cookies do Instagram. Este repositório demonstra o contrato público; a operação da API permanece separada.
