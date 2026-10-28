@@ -1,3 +1,33 @@
+<p align="center"><img alt="Identidade visual de BunnyFy Showcase" src=".github/brand-cover-20261028.svg" width="100%"></p>
+
+<h1 align="center">BunnyFy Showcase</h1>
+<p align="center"><strong>A engenharia por trás do produto, sem expor a operação.</strong><br>Exibição pública de contratos, arquitetura e componentes selecionados da BunnyFy, não uma distribuição do backend privado.</p>
+<p align="center"><code>VITRINE TÉCNICA · PÚBLICA</code></p>
+<p align="center">[**Site público**](https://bunnyfy-dimeo.dgreych-domo.workers.dev/) · [**Plataforma Shogun**](https://shogun-dimeo.dgreych-domo.workers.dev/)</p>
+
+---
+
+## O que este projeto entrega
+
+| Área | Descrição |
+| :-- | :-- |
+| **Propósito** | Contratos claros entre serviços |
+| **Experiência** | Arquitetura com módulos desacoplados |
+| **Engenharia** | Exemplos de capacidades, testes e documentação |
+
+## Documentação e acesso
+
+- [Site público](https://bunnyfy-dimeo.dgreych-domo.workers.dev/)
+- [Plataforma Shogun](https://shogun-dimeo.dgreych-domo.workers.dev/)
+
+> [!IMPORTANT]
+> Esta vitrine não inclui o backend integral nem infraestrutura, credenciais e recursos operacionais privados.
+
+---
+
+<details>
+<summary><strong>Documentação técnica completa</strong> · comandos, configuração, decisões e histórico</summary>
+
 <h1 align="center">BunnyFy</h1>
 
 <p align="center">
@@ -205,3 +235,5 @@ Este espaço é o cartão técnico da BunnyFy: arquitetura, contratos, decisões
 O consumidor deve resolver `media.mediaUrl` relativa contra a origem da API, baixar os bytes antes da expiração e enviar a mídia no tipo correspondente. Nunca coloque a chave na URL. Stories usam o link direto `/stories/usuario/id/` e dependem de estarem disponíveis e acessíveis à sessão mantida pela plataforma.
 
 No Shogun, use `!instagram <link>` ou `!igstory <link>`. A sessão de acesso ao Instagram fica na API; cada instância do bot utiliza sua configuração BunnyFy e não precisa receber cookies do Instagram. Este repositório demonstra o contrato público; a operação da API permanece separada.
+
+</details>
